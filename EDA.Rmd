@@ -1,0 +1,200 @@
+---
+title: "EDA with Recommendations for CCG Composting"
+author: "David Snider"
+date: "8/9/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE, echo=F}
+knitr::opts_chunk$set(echo = FALSE)
+options(warn=-1, dplyr.summarise.inform = FALSE)
+library(tidyverse)
+
+df = read.csv("CCCG compost_August 9, 2021_07.25.csv") %>%
+  remove_rownames()
+```
+
+At first the data looked like this, with dimensions of 5 $\times$ 43:
+
+```{r}
+df %>%
+  select(StartDate:IPAddress) %>%
+  head(5)
+```
+
+So we needed to clean it. I removed the first two rows (which were not actual observations), added in missing dates, and tidied the data. Before tidying, each observation was a survey response, corresponding to a particular workday. After tidying, each observation was one workday, which allowed for easier analysis of trends. 
+
+```{r}
+df = df[3:169,]
+df$id = seq.int(nrow(df))
+
+#First, fill in missing dates
+simple = df %>%
+  select(
+    id,
+    StartDate, 
+    Duration..in.seconds.,
+    ResponseId,
+    Q31,
+    Q1:Q24
+  ) %>%
+  rename(
+    bins = Q1,
+    "Bin 1 status" = Q2,
+    "Bin 1 notes" = Q3,
+    "Bin 2 status" = Q4,
+    "Bin 2 notes" = Q5,
+    "Bin 3 status" = Q6,
+    "Bin 3 notes" = Q7,
+    "Bin 4 status" = Q8,
+    "Bin 4 notes" = Q9,
+    "Bin 5 status" = Q10,
+    "Bin 5 notes" = Q11,
+    "Bin 6 status" = Q12,
+    "Bin 6 notes" = Q13,
+    "Bin 7 status" = Q14,
+    "Bin 7 notes" = Q15,
+    "Bin 8 status" = Q16,
+    "Bin 8 notes" = Q17,
+    "Bin 9 status" = Q18,
+    "Bin 9 notes" = Q19,
+    "Bin 10 status" = Q20,
+    "Bin 10 notes" = Q21,
+    "Bin 11 status" = Q22,
+    "Bin 11 notes" = Q23
+  )
+# will mutate, assigning Q31 to created array of desired values
+
+#create desired array here:
+dates_array = simple$Q31
+dates_array[1] = "08-29-2019"
+dates_array[7] = "09-11-2019"
+dates_array[20] = "10-22-2019"
+dates_array[31] = "11-26-2019"
+dates_array[91] = "12-09-2020"
+dates_array[147] = "05-26-2021"
+
+simple2 = simple %>%
+  mutate(date = as.Date(dates_array, format="%m-%d-%Y")) %>%
+  select(-c(StartDate, ResponseId, Q31)) %>%
+  select(id, date, everything())
+
+#make each observed bin an observation
+simple3 = simple2 %>%
+  mutate(bins = strsplit(bins, ",")) %>%
+  unnest(bins)
+
+status = vector(mode="character", nrow(simple3))
+notes = vector(mode="character", nrow(simple3))
+
+for (i in 1:nrow(simple3)) {
+  status[i] = (simple3 %>% 
+    select(
+      paste("Bin",
+            as.character(simple3$bins[i]),
+            "status"
+      )
+    )
+  )[[1]][i]
+  notes[i] = (simple3 %>% 
+    select(
+      paste("Bin",
+            as.character(simple3$bins[i]),
+            "notes"
+      )
+    )
+  )[[1]][i]
+}
+
+simple4 = simple3 %>%
+  mutate(`status` = status,
+         `notes` = notes) %>%
+  select(-("Bin 1 status":"Bin 11 notes"))
+```
+
+```{r, eval=F}
+ggplot(simple2) + 
+  geom_density(aes(x=as.integer(Duration..in.seconds.)), bins=10) + 
+  xlim(0, 300) + 
+  xlab("Time to Complete Survey (seconds)") + 
+  ylab("Density")
+```
+
+```{r}
+simple3 = simple2 %>%
+  mutate(bins = strsplit(bins, ",")) %>%
+  unnest(bins)
+
+status = vector(mode="character", nrow(simple3))
+notes = vector(mode="character", nrow(simple3))
+
+for (i in 1:nrow(simple3)) {
+  status[i] = (simple3 %>% 
+    select(
+      paste("Bin",
+            as.character(simple3$bins[i]),
+            "status"
+      )
+    )
+  )[[1]][i]
+  notes[i] = (simple3 %>% 
+    select(
+      paste("Bin",
+            as.character(simple3$bins[i]),
+            "notes"
+      )
+    )
+  )[[1]][i]
+}
+
+simple4 = simple3 %>%
+  mutate(`status` = status,
+         `notes` = notes) %>%
+  select(-("Bin 1 status":"Bin 11 notes"))
+```
+
+For example, it allowed me to make this visualization with ggplot, which could be interpreted as a measure of productivity:
+
+```{r}
+dated_out = simple4 %>%
+  separate(date, 
+           sep="-",
+           into = c(
+             "year",
+             "month", 
+             "day"
+           )) %>%
+  mutate(year = as.integer(year),
+         month = as.integer(month),
+         day = as.integer(day))
+
+bg_data = dated_out %>%
+  group_by(year, month) %>%
+  summarize(bg = sum(status=="Black Gold")) %>%
+  ungroup()
+
+ggplot(bg_data) +
+  geom_bar(aes(x=month, y=bg), stat="identity") +
+  scale_x_discrete(limits=1:12) +
+  facet_wrap(~year) + 
+  xlab("Month") + 
+  ylab("# Black Gold Per Work Session") + 
+  ggtitle("# of Black Gold Per Work Session Over Time")
+```
+
+The way the data was organized made it rather difficult to analyze the note on each bin. The notes actually describes the activity done on that bin, if you look at the responses that people actually give for that category. Perhaps we should change the name of that category to "activity", and only allow a few discrete categories. It would make it much easier for the analyst, because otherwise it can be difficult to standardize.
+
+Now about the visualization above. It prompts me to question to what extent is increased compost productivity related to warmer weather and to what extent to increased volunteer participation. On the one hand, the numbers seem to be higher during summer months, but the low numbers during July counteract this trend. Simone was gone for the first two weeks of July, and David was gone the first, and stopped coming during the week because of a class conflict. Drained for volunteers, our numbers seem to have dropped. 
+
+This discussion is thought-provoking, but it is still speculative. It would be a good idea to quantify this relationship, and we could do so if we collected data on the number of volunteers. Moreover, such a model could help us make predictions of how many volunteers we need on composting, which can help us get a clearer idea of how many volunteers we should aim to recruit for the garden at large. 
+
+However, in order to predict how many volunteers we need, we need to understand both how productive we can be given the weather, as well as how much compost the garden demands. To do this, we could include a section that asks "how much compost was used today?" Perhaps the responses could be spaced out in half-bins: 1/2, 1, 3/2, 2, etc. to create categories for simple analysis. 
+
+# Recommendations:
+
+-Change the name of the "notes" column to "activity", and only allow a few discrete values as responses, such as turned, added, combined, etc. (miscellaneous notes can go at the end)
+
+-Include number of composting volunteers in survey
+
+-Include amount of compost used in survey, to understand demand
+
